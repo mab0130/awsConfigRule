@@ -1,18 +1,17 @@
+# Import libraries - Lambda will require ipaddress to be uploaded
+
 import json
 import ipaddress
 import boto3
 
-def byteify(input):
-    if isinstance(input, dict):
-        return {byteify(key): byteify(value)
-                for key, value in input.iteritems()}
-    elif isinstance(input, list):
-        return [byteify(element) for element in input]
-    elif isinstance(input, unicode):
-        return input.encode('utf-8')
-    else:
-        return input
-    
+# Edit this list to include all networks that represent "On prem/Datacenter/remote office etc.."
+onprem = [
+    "192.0.0.0/16",
+    "10.218.0.0/16",
+    "10.220.0.0/23",
+    "172.31.100.0/18",
+    ]
+# This function uses the ipaddress library to compre the 'onprem' list with AWS Account VPC's  
 def cidrcheck(net1, net2):
     prem = map(unicode, net1)   
     test=[]
@@ -21,25 +20,14 @@ def cidrcheck(net1, net2):
         n2 = ipaddress.IPv4Network(net2)
         test.append(n1.overlaps(n2))
     
-   
+
     if True in test:
         return False
     else:
         return True
 
-onprem = [
-    "192.0.0.0/16",
-    "10.218.0.0/16",
-    "10.220.0.0/23",
-    "172.31.100.0/18",
-    ]
-
-#client = boto3.client(
-#    'config', 
-#    aws_access_key_id='ENTER YOURS HERE', 
-#    aws_secret_access_key='ENTER YOURS HERE',
-#    )
-
+# Lambda Function Handler filename.handler - 
+# Creates AWS Config Rule connection and parses event object to find VPC CIDR's
 def handler(event, context):
     config_service = boto3.client('config')
     event_item = json.loads(event['invokingEvent'])
@@ -48,28 +36,26 @@ def handler(event, context):
     cidr = config_item['configuration']['cidrBlock']
     resource_type = config_item['resourceType']
     
-    #print json.dumps(config_item, indent=4)
-    #print json.dumps(event_item)
-    #print json.dumps(cidr)
-    
+# Make sure config_item is not deleted and of the correct type    
     if config_item['configurationItemStatus'] == 'ResourceDeleted' or \
        resource_type != 'AWS::EC2::VPC':
         return
-    
+
+# Setup the Evaluation object and set its variables to the event object    
     evaluation = {
         'ComplianceResourceType': config_item['resourceType'],
         'ComplianceResourceId': config_item['resourceId'],
         'ComplianceType': 'NON_COMPLIANT',
         'OrderingTimestamp': config_item['configurationItemCaptureTime']
     }
-
+# Execute evaluation
     result = cidrcheck(onprem, cidr)
     
     if result is True:
         evaluation['ComplianceType'] = 'COMPLIANT'
     else:
         evaluation['ComplianceType'] = 'NON_COMPLIANT'
-    
+# Return the evaluation status to the AWS Config Rule service    
     config_service.put_evaluations(
        Evaluations=[evaluation], ResultToken=event['resultToken']
     )
